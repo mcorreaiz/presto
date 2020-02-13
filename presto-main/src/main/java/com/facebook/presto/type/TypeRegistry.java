@@ -30,6 +30,7 @@ import com.facebook.presto.spi.type.TypeSignatureParameter;
 import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.analyzer.FeaturesConfig;
 import com.facebook.presto.type.setdigest.SetDigestType;
+import com.facebook.presto.type.khyperloglog.KHyperLogLogType;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
@@ -90,6 +91,7 @@ import static com.facebook.presto.type.MapParametricType.MAP;
 import static com.facebook.presto.type.Re2JRegexpType.RE2J_REGEXP;
 import static com.facebook.presto.type.RowParametricType.ROW;
 import static com.facebook.presto.type.UnknownType.UNKNOWN;
+import static com.facebook.presto.type.khyperloglog.KHyperLogLogType.K_HYPER_LOG_LOG;
 import static com.facebook.presto.type.setdigest.SetDigestType.SET_DIGEST;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
@@ -141,6 +143,7 @@ public final class TypeRegistry
         addType(INTERVAL_DAY_TIME);
         addType(HYPER_LOG_LOG);
         addType(SET_DIGEST);
+        addType(K_HYPER_LOG_LOG);
         addType(P4_HYPER_LOG_LOG);
         addType(JONI_REGEXP);
         addType(RE2J_REGEXP);
@@ -464,11 +467,12 @@ public final class TypeRegistry
                     case StandardTypes.TIMESTAMP:
                     case StandardTypes.TIMESTAMP_WITH_TIME_ZONE:
                     case StandardTypes.HYPER_LOG_LOG:
-                    case SetDigestType.NAME:
                     case StandardTypes.P4_HYPER_LOG_LOG:
                     case StandardTypes.JSON:
                     case StandardTypes.INTERVAL_YEAR_TO_MONTH:
                     case StandardTypes.INTERVAL_DAY_TO_SECOND:
+                    case SetDigestType.NAME:
+                    case KHyperLogLogType.NAME:
                     case JoniRegexpType.NAME:
                     case LikePatternType.NAME:
                     case JsonPathType.NAME:

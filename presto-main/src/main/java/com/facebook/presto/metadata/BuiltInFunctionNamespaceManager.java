@@ -204,6 +204,10 @@ import com.facebook.presto.type.TinyintOperators;
 import com.facebook.presto.type.UnknownOperators;
 import com.facebook.presto.type.VarbinaryOperators;
 import com.facebook.presto.type.VarcharOperators;
+import com.facebook.presto.type.khyperloglog.BuildKHyperLogLogAggregation;
+import com.facebook.presto.type.khyperloglog.MergeKHyperLogLogAggregation;
+import com.facebook.presto.type.khyperloglog.KHyperLogLogFunctions;
+import com.facebook.presto.type.khyperloglog.KHyperLogLogOperators;
 import com.facebook.presto.type.setdigest.BuildSetDigestAggregation;
 import com.facebook.presto.type.setdigest.MergeSetDigestAggregation;
 import com.facebook.presto.type.setdigest.SetDigestFunctions;
@@ -670,6 +674,10 @@ public class BuiltInFunctionNamespaceManager
                 .aggregate(BuildSetDigestAggregation.class)
                 .scalars(SetDigestFunctions.class)
                 .scalars(SetDigestOperators.class)
+                .aggregate(MergeKHyperLogLogAggregation.class)
+                .aggregate(BuildKHyperLogLogAggregation.class)
+                .scalars(KHyperLogLogFunctions.class)
+                .scalars(KHyperLogLogOperators.class)
                 .scalars(WilsonInterval.class)
                 .scalars(TDigestOperators.class)
                 .scalars(TDigestFunctions.class)
