@@ -33,7 +33,6 @@ import java.util.Map;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
-import static com.facebook.presto.type.khyperloglog.KHyperLogLog.exactIntersectionCardinality;
 
 public final class KHyperLogLogFunctions
 {
@@ -54,24 +53,23 @@ public final class KHyperLogLogFunctions
     @SqlType(StandardTypes.BIGINT)
     public static long intersectionCardinality(@SqlType(KHyperLogLogType.NAME) Slice slice1, @SqlType(KHyperLogLogType.NAME) Slice slice2)
     {
-        KHyperLogLog digest1 = KHyperLogLog.newInstance(slice1);
-        KHyperLogLog digest2 = KHyperLogLog.newInstance(slice2);
+        KHyperLogLog khll1 = KHyperLogLog.newInstance(slice1);
+        KHyperLogLog khll2 = KHyperLogLog.newInstance(slice2);
 
-        if (digest1.isExact() && digest2.isExact()) {
-            return exactIntersectionCardinality(digest1, digest2);
+        if (khll1.isExact() && khll2.isExact()) {
+            return KHyperLogLog.exactIntersectionCardinality(khll1, khll2);
         }
 
-        long cardinality1 = digest1.cardinality();
-        long cardinality2 = digest2.cardinality();
-        double jaccard = KHyperLogLog.jaccardIndex(digest1, digest2);
-        digest1.mergeWith(digest2);
-        long result = Math.round(jaccard * digest1.cardinality());
+        double jaccard = KHyperLogLog.jaccardIndex(khll1, khll2);
+        KHyperLogLog setUnion = KHyperLogLog.merge(khll1, khll2);
+        long result = Math.round(jaccard * setUnion.cardinality());
 
         // When one of the sets is much smaller than the other and approaches being a true
         // subset of the other, the computed cardinality may exceed the cardinality estimate
         // of the smaller set. When this happens the cardinality of the smaller set is obviously
         // a better estimate of the one computed with the Jaccard Index.
-        return Math.min(result, Math.min(cardinality1, cardinality2));
+        long lowestCardinality = Math.min(khll1.cardinality(), khll2.cardinality());
+        return Math.min(result, lowestCardinality);
     }
 
     @ScalarFunction
@@ -114,5 +112,12 @@ public final class KHyperLogLogFunctions
         catch (JsonProcessingException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    @ScalarFunction
+    @SqlType(StandardTypes.DOUBLE)
+    public static double reidentificationPotential(@SqlType(KHyperLogLogType.NAME) Slice khll, @SqlType(StandardTypes.BIGINT) long threshold)
+    {
+        return KHyperLogLog.newInstance(khll).reidentificationPotential(threshold);
     }
 }

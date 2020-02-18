@@ -19,7 +19,6 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Murmur3Hash128;
-import io.airlift.slice.SizeOf;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceInput;
 import io.airlift.slice.SliceOutput;
@@ -49,7 +48,7 @@ import static java.util.Objects.requireNonNull;
 public class KHyperLogLog
 {
     private static final byte UNCOMPRESSED_FORMAT = 1;
-    public static final int NUMBER_OF_BUCKETS = 512;
+    public static final int DEFAULT_HLL_BUCKETS = 512;
     public static final int DEFAULT_K = 2048;
     private static final long HASH_OUTPUT_HALF_RANGE = Long.MAX_VALUE;
     private static final int SIZE_OF_KHYPERLOGLOG = ClassLayout.parseClass(KHyperLogLog.class).instanceSize();
@@ -61,7 +60,7 @@ public class KHyperLogLog
 
     public KHyperLogLog()
     {
-        this(DEFAULT_K, NUMBER_OF_BUCKETS, new Long2ObjectRBTreeMap<>());
+        this(DEFAULT_K, DEFAULT_HLL_BUCKETS, new Long2ObjectRBTreeMap<>());
     }
 
     public KHyperLogLog(int K, int hllBuckets)
@@ -78,7 +77,6 @@ public class KHyperLogLog
 
     public static KHyperLogLog newInstance(Slice serialized)
     {
-        // TODO: Review
         requireNonNull(serialized, "serialized is null");
         SliceInput input = serialized.getInput();
         checkArgument(input.readByte() == UNCOMPRESSED_FORMAT, "Unexpected version");
@@ -166,7 +164,6 @@ public class KHyperLogLog
 
     public static long exactIntersectionCardinality(KHyperLogLog a, KHyperLogLog b)
     {
-        // TODO: Review
         checkState(a.isExact(), "exact intersection cannot operate on approximate sets");
         checkArgument(b.isExact(), "exact intersection cannot operate on approximate sets");
 
@@ -175,7 +172,6 @@ public class KHyperLogLog
 
     public static double jaccardIndex(KHyperLogLog a, KHyperLogLog b)
     {
-        // TODO: Review
         int sizeOfSmallerSet = Math.min(a.minhash.size(), b.minhash.size());
         LongSortedSet minUnion = new LongRBTreeSet(a.minhash.keySet());
         minUnion.addAll(b.minhash.keySet());
@@ -213,19 +209,23 @@ public class KHyperLogLog
     private void update(long hash, long uii)
     {
         if (minhash.containsKey(hash)) {
-            HyperLogLog hll = minhash.get(hash);
-            hll.add(uii);
+            minhash.get(hash).add(uii);
         } else if (isExact() || hash < minhash.lastLongKey()) {
-            HyperLogLog hll = HyperLogLog.newInstance(this.hllBuckets);
+            HyperLogLog hll = HyperLogLog.newInstance(hllBuckets);
             hll.add(uii);
             minhash.put(hash, hll);
-            while (minhash.size() > K) {
-                minhash.remove(minhash.lastLongKey());
-            }
+            removeOverflowEntries();
         }
     }
 
-    public void mergeWith(KHyperLogLog other)
+    public static KHyperLogLog merge(KHyperLogLog khll1, KHyperLogLog khll2) {
+        if (khll1.K <= khll2.K) {
+            return khll1.mergeWith(khll2);
+        }
+        return khll2.mergeWith(khll1);
+    }
+
+    public KHyperLogLog mergeWith(KHyperLogLog other)
     {
         LongBidirectionalIterator iterator = other.minhash.keySet().iterator();
         while (iterator.hasNext()) {
@@ -236,9 +236,24 @@ public class KHyperLogLog
                 minhash.put(key, other.minhash.get(key));
             }
         }
+        removeOverflowEntries();
+        return this;
+    }
+
+    private void removeOverflowEntries() {
         while (minhash.size() > K) {
             minhash.remove(minhash.lastLongKey());
         }
+    }
+
+    public double reidentificationPotential(long threshold) {
+        int highlyUniqueValues = 0;
+        for (HyperLogLog hll : minhash.values()) {
+            if (hll.cardinality() <= threshold) {
+                highlyUniqueValues++;
+            }
+        }
+        return (double) highlyUniqueValues / minhash.size();
     }
 
     public Map<Long, HyperLogLog> getHashCounts()
