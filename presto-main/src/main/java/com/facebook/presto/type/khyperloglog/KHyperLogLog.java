@@ -48,8 +48,8 @@ import static java.util.Objects.requireNonNull;
 public class KHyperLogLog
 {
     private static final byte UNCOMPRESSED_FORMAT = 1;
-    public static final int DEFAULT_HLL_BUCKETS = 512;
-    public static final int DEFAULT_K = 2048;
+    public static final int DEFAULT_HLL_BUCKETS = 256;
+    public static final int DEFAULT_K = 4096;
     private static final long HASH_OUTPUT_HALF_RANGE = Long.MAX_VALUE;
     private static final int SIZE_OF_KHYPERLOGLOG = ClassLayout.parseClass(KHyperLogLog.class).instanceSize();
     private static final int SIZE_OF_RBTREEMAP = ClassLayout.parseClass(Long2ObjectRBTreeMap.class).instanceSize();
@@ -190,6 +190,18 @@ public class KHyperLogLog
         return intersection / (double) sizeOfSmallerSet;
     }
 
+    public static KHyperLogLog merge(KHyperLogLog khll1, KHyperLogLog khll2) {
+        /*
+        Return the one with smallest K so resolution is not lost. This loss would happen in the case
+        one merged a smaller KHLL into a bigger one because the former's minhash struct won't
+        cover all of the latter's minhash space.
+         */
+        if (khll1.K <= khll2.K) {
+            return khll1.mergeWith(khll2);
+        }
+        return khll2.mergeWith(khll1);
+    }
+
     /*
 
     ADD SUPPORT FOR ADDING EVERY TYPE
@@ -216,13 +228,6 @@ public class KHyperLogLog
             minhash.put(hash, hll);
             removeOverflowEntries();
         }
-    }
-
-    public static KHyperLogLog merge(KHyperLogLog khll1, KHyperLogLog khll2) {
-        if (khll1.K <= khll2.K) {
-            return khll1.mergeWith(khll2);
-        }
-        return khll2.mergeWith(khll1);
     }
 
     public KHyperLogLog mergeWith(KHyperLogLog other)

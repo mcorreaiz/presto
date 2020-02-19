@@ -50,6 +50,16 @@ public final class KHyperLogLogFunctions
     }
 
     @ScalarFunction
+    @SqlType(KHyperLogLogType.NAME)
+    public static Slice mergeKhll(@SqlType(KHyperLogLogType.NAME) Slice slice1, @SqlType(KHyperLogLogType.NAME) Slice slice2)
+    {
+        KHyperLogLog khll1 = KHyperLogLog.newInstance(slice1);
+        KHyperLogLog khll2 = KHyperLogLog.newInstance(slice2);
+
+        return KHyperLogLog.merge(khll1, khll2).serialize();
+    }
+
+    @ScalarFunction
     @SqlType(StandardTypes.BIGINT)
     public static long intersectionCardinality(@SqlType(KHyperLogLogType.NAME) Slice slice1, @SqlType(KHyperLogLogType.NAME) Slice slice2)
     {
@@ -60,6 +70,7 @@ public final class KHyperLogLogFunctions
             return KHyperLogLog.exactIntersectionCardinality(khll1, khll2);
         }
 
+        long lowestCardinality = Math.min(khll1.cardinality(), khll2.cardinality());
         double jaccard = KHyperLogLog.jaccardIndex(khll1, khll2);
         KHyperLogLog setUnion = KHyperLogLog.merge(khll1, khll2);
         long result = Math.round(jaccard * setUnion.cardinality());
@@ -68,7 +79,6 @@ public final class KHyperLogLogFunctions
         // subset of the other, the computed cardinality may exceed the cardinality estimate
         // of the smaller set. When this happens the cardinality of the smaller set is obviously
         // a better estimate of the one computed with the Jaccard Index.
-        long lowestCardinality = Math.min(khll1.cardinality(), khll2.cardinality());
         return Math.min(result, lowestCardinality);
     }
 
@@ -76,10 +86,10 @@ public final class KHyperLogLogFunctions
     @SqlType(StandardTypes.DOUBLE)
     public static double jaccardIndex(@SqlType(KHyperLogLogType.NAME) Slice slice1, @SqlType(KHyperLogLogType.NAME) Slice slice2)
     {
-        KHyperLogLog digest1 = KHyperLogLog.newInstance(slice1);
-        KHyperLogLog digest2 = KHyperLogLog.newInstance(slice2);
+        KHyperLogLog khll1 = KHyperLogLog.newInstance(slice1);
+        KHyperLogLog khll2 = KHyperLogLog.newInstance(slice2);
 
-        return KHyperLogLog.jaccardIndex(digest1, digest2);
+        return KHyperLogLog.jaccardIndex(khll1, khll2);
     }
 
     @ScalarFunction
