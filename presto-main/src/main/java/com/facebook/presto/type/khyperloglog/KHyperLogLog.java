@@ -15,7 +15,6 @@
 package com.facebook.presto.type.khyperloglog;
 
 import com.facebook.airlift.stats.cardinality.HyperLogLog;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Sets;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Murmur3Hash128;
@@ -33,6 +32,8 @@ import org.openjdk.jol.info.ClassLayout;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Map;
+import java.util.TreeMap;
+import java.util.stream.LongStream;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
@@ -74,6 +75,13 @@ public class KHyperLogLog
         this.hllBuckets = hllBuckets;
         this.minhash = requireNonNull(minhash, "minhash is null");
     }
+
+    public boolean isExact()
+    {
+        return minhash.size() < K;
+    }
+
+    public long getMinhashSize() { return minhash.size(); }
 
     public static KHyperLogLog newInstance(Slice serialized)
     {
@@ -142,9 +150,24 @@ public class KHyperLogLog
                 minhash.values().stream().mapToInt(HyperLogLog::estimatedSerializedSize).sum();
     }
 
-    public boolean isExact()
+    public void add(long value, long uii) { update(Murmur3Hash128.hash64(value), uii); }
+
+    public void add(Slice value, long uii)
     {
-        return minhash.size() < K;
+        update(Murmur3Hash128.hash64(value), uii);
+    }
+
+    private void update(long hash, long uii)
+    {
+        if (minhash.containsKey(hash)) {
+            minhash.get(hash).add(uii);
+        }
+        else if (isExact() || hash < minhash.lastLongKey()) {
+            HyperLogLog hll = HyperLogLog.newInstance(hllBuckets);
+            hll.add(uii);
+            minhash.put(hash, hll);
+            removeOverflowEntries();
+        }
     }
 
     public long cardinality()
@@ -158,7 +181,7 @@ public class KHyperLogLog
         // via Long.MAX_VALUE and also divide the hash values' density by 2. The "-1" is bias correction
         // detailed in "On Synopses for Distinct-Value Estimation Under Multiset Operations" by Beyer et. al.
         long k_hashes_range = minhash.lastLongKey() - Long.MIN_VALUE;
-        double half_density = Long.divideUnsigned(k_hashes_range,  minhash.size()) / 2D;
+        double half_density = Long.divideUnsigned(k_hashes_range, minhash.size()) / 2D;
         return (long) (HASH_OUTPUT_HALF_RANGE / half_density);
     }
 
@@ -190,7 +213,8 @@ public class KHyperLogLog
         return intersection / (double) sizeOfSmallerSet;
     }
 
-    public static KHyperLogLog merge(KHyperLogLog khll1, KHyperLogLog khll2) {
+    public static KHyperLogLog merge(KHyperLogLog khll1, KHyperLogLog khll2)
+    {
         /*
         Return the one with smallest K so resolution is not lost. This loss would happen in the case
         one merged a smaller KHLL into a bigger one because the former's minhash struct won't
@@ -202,34 +226,6 @@ public class KHyperLogLog
         return khll2.mergeWith(khll1);
     }
 
-    /*
-
-    ADD SUPPORT FOR ADDING EVERY TYPE
-
-     */
-
-    public void add(long value, long uii)
-    {
-        update(Murmur3Hash128.hash64(value), uii);
-    }
-
-    public void add(Slice value, long uii)
-    {
-        update(Murmur3Hash128.hash64(value), uii);
-    }
-
-    private void update(long hash, long uii)
-    {
-        if (minhash.containsKey(hash)) {
-            minhash.get(hash).add(uii);
-        } else if (isExact() || hash < minhash.lastLongKey()) {
-            HyperLogLog hll = HyperLogLog.newInstance(hllBuckets);
-            hll.add(uii);
-            minhash.put(hash, hll);
-            removeOverflowEntries();
-        }
-    }
-
     public KHyperLogLog mergeWith(KHyperLogLog other)
     {
         LongBidirectionalIterator iterator = other.minhash.keySet().iterator();
@@ -237,7 +233,8 @@ public class KHyperLogLog
             long key = iterator.nextLong();
             if (minhash.containsKey(key)) {
                 minhash.get(key).mergeWith(other.minhash.get(key));
-            } else {
+            }
+            else {
                 minhash.put(key, other.minhash.get(key));
             }
         }
@@ -245,13 +242,8 @@ public class KHyperLogLog
         return this;
     }
 
-    private void removeOverflowEntries() {
-        while (minhash.size() > K) {
-            minhash.remove(minhash.lastLongKey());
-        }
-    }
-
-    public double reidentificationPotential(long threshold) {
+    public double reidentificationPotential(long threshold)
+    {
         int highlyUniqueValues = 0;
         for (HyperLogLog hll : minhash.values()) {
             if (hll.cardinality() <= threshold) {
@@ -261,8 +253,24 @@ public class KHyperLogLog
         return (double) highlyUniqueValues / minhash.size();
     }
 
-    public Map<Long, HyperLogLog> getHashCounts()
+    public Map<Long, Double> uniquenessDistribution() { return uniquenessDistribution(minhash.size()); }
+
+    public Map<Long, Double> uniquenessDistribution(long histogramSize)
     {
-        return ImmutableMap.copyOf(minhash);
+        Map<Long, Double> out = new TreeMap<>();
+        LongStream.rangeClosed(1, histogramSize).forEach(l -> out.put(l, 0D));
+        int size = minhash.size();
+        for (HyperLogLog hll : minhash.values()) {
+            long bucket = Math.min(hll.cardinality(), histogramSize);
+            out.merge(bucket, (double) 1 / size, Double::sum);
+        }
+        return out;
+    }
+
+    private void removeOverflowEntries()
+    {
+        while (minhash.size() > K) {
+            minhash.remove(minhash.lastLongKey());
+        }
     }
 }

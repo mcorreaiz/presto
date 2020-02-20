@@ -16,11 +16,15 @@ package com.facebook.presto.type.khyperloglog;
 
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.function.AggregationFunction;
+import com.facebook.presto.spi.function.AggregationState;
 import com.facebook.presto.spi.function.CombineFunction;
 import com.facebook.presto.spi.function.InputFunction;
+import com.facebook.presto.spi.function.LiteralParameters;
 import com.facebook.presto.spi.function.OutputFunction;
 import com.facebook.presto.spi.function.SqlType;
 import com.facebook.presto.spi.type.StandardTypes;
+import io.airlift.slice.Murmur3Hash128;
+import io.airlift.slice.Slice;
 
 @AggregationFunction("make_khyperloglog")
 public final class BuildKHyperLogLogAggregation
@@ -29,18 +33,8 @@ public final class BuildKHyperLogLogAggregation
 
     private BuildKHyperLogLogAggregation() {}
 
-    /*
-
-
-    MAKE ALL INPUT FUNCTIONS
-
-
-     */
-
-
-
     @InputFunction
-    public static void input(KHyperLogLogState state, @SqlType(StandardTypes.BIGINT) long value, @SqlType(StandardTypes.BIGINT) long uii)
+    public static void input(@AggregationState KHyperLogLogState state, @SqlType(StandardTypes.BIGINT) long value, @SqlType(StandardTypes.BIGINT) long uii)
     {
         if (state.getKHLL() == null) {
             state.setKHLL(new KHyperLogLog());
@@ -48,8 +42,45 @@ public final class BuildKHyperLogLogAggregation
         state.getKHLL().add(value, uii);
     }
 
+    @InputFunction
+    @LiteralParameters("x")
+    public static void input(@AggregationState KHyperLogLogState state, @SqlType("varchar(x)") Slice value, @SqlType(StandardTypes.BIGINT) long uii)
+    {
+        if (state.getKHLL() == null) {
+            state.setKHLL(new KHyperLogLog());
+        }
+        state.getKHLL().add(value, uii);
+    }
+
+    @InputFunction
+    public static void input(@AggregationState KHyperLogLogState state, @SqlType(StandardTypes.DOUBLE) double value, @SqlType(StandardTypes.BIGINT) long uii)
+    {
+        input(state, Double.doubleToLongBits(value), uii);
+    }
+
+    @InputFunction
+    @LiteralParameters("x")
+    public static void input(@AggregationState KHyperLogLogState state, @SqlType(StandardTypes.BIGINT) long value, @SqlType("varchar(x)") Slice uii)
+    {
+        input(state, value, Murmur3Hash128.hash64(uii));
+    }
+
+    @InputFunction
+    @LiteralParameters({"x", "y"})
+    public static void input(@AggregationState KHyperLogLogState state, @SqlType("varchar(x)") Slice value, @SqlType("varchar(y)") Slice uii)
+    {
+        input(state, value, Murmur3Hash128.hash64(uii));
+    }
+
+    @InputFunction
+    @LiteralParameters("x")
+    public static void input(@AggregationState KHyperLogLogState state, @SqlType(StandardTypes.DOUBLE) double value, @SqlType("varchar(x)") Slice uii)
+    {
+        input(state, Double.doubleToLongBits(value), Murmur3Hash128.hash64(uii));
+    }
+
     @CombineFunction
-    public static void combine(KHyperLogLogState state, KHyperLogLogState otherState)
+    public static void combine(@AggregationState KHyperLogLogState state, @AggregationState KHyperLogLogState otherState)
     {
         if (state.getKHLL() == null) {
             KHyperLogLog copy = new KHyperLogLog();
@@ -62,7 +93,7 @@ public final class BuildKHyperLogLogAggregation
     }
 
     @OutputFunction(KHyperLogLogType.NAME)
-    public static void output(KHyperLogLogState state, BlockBuilder out)
+    public static void output(@AggregationState KHyperLogLogState state, BlockBuilder out)
     {
         SERIALIZER.serialize(state, out);
     }

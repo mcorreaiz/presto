@@ -15,7 +15,6 @@
 package com.facebook.presto.type.khyperloglog;
 
 import com.facebook.airlift.json.ObjectMapperProvider;
-import com.facebook.airlift.stats.cardinality.HyperLogLog;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.function.ScalarFunction;
@@ -23,16 +22,13 @@ import com.facebook.presto.spi.function.SqlType;
 import com.facebook.presto.spi.function.TypeParameter;
 import com.facebook.presto.spi.type.StandardTypes;
 import com.facebook.presto.spi.type.Type;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.airlift.slice.Slice;
-import io.airlift.slice.Slices;
 
-import java.io.UncheckedIOException;
 import java.util.Map;
 
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
-import static com.facebook.presto.spi.type.SmallintType.SMALLINT;
+import static com.facebook.presto.spi.type.DoubleType.DOUBLE;
 
 public final class KHyperLogLogFunctions
 {
@@ -47,16 +43,6 @@ public final class KHyperLogLogFunctions
     public static long cardinality(@SqlType(KHyperLogLogType.NAME) Slice khll)
     {
         return KHyperLogLog.newInstance(khll).cardinality();
-    }
-
-    @ScalarFunction
-    @SqlType(KHyperLogLogType.NAME)
-    public static Slice mergeKhll(@SqlType(KHyperLogLogType.NAME) Slice slice1, @SqlType(KHyperLogLogType.NAME) Slice slice2)
-    {
-        KHyperLogLog khll1 = KHyperLogLog.newInstance(slice1);
-        KHyperLogLog khll2 = KHyperLogLog.newInstance(slice2);
-
-        return KHyperLogLog.merge(khll1, khll2).serialize();
     }
 
     @ScalarFunction
@@ -93,17 +79,24 @@ public final class KHyperLogLogFunctions
     }
 
     @ScalarFunction
-    @SqlType("map(bigint,smallint)")
-    public static Block hashCounts(@TypeParameter("map<bigint,smallint>") Type mapType, @SqlType(KHyperLogLogType.NAME) Slice slice)
+    @SqlType("map(bigint,double)")
+    public static Block uniquenessDistribution(@TypeParameter("map<bigint,double>") Type mapType, @SqlType(KHyperLogLogType.NAME) Slice slice)
     {
-        KHyperLogLog digest = KHyperLogLog.newInstance(slice);
+        KHyperLogLog khll = KHyperLogLog.newInstance(slice);
+        return uniquenessDistribution(mapType, slice, khll.getMinhashSize());
+    }
 
-        // Maybe use static BlockBuilderStatus in order avoid `new`?
+    @ScalarFunction
+    @SqlType("map(bigint,double)")
+    public static Block uniquenessDistribution(@TypeParameter("map<bigint,double>") Type mapType, @SqlType(KHyperLogLogType.NAME) Slice slice, @SqlType(StandardTypes.BIGINT) long histogramSize)
+    {
+        KHyperLogLog khll = KHyperLogLog.newInstance(slice);
+
         BlockBuilder blockBuilder = mapType.createBlockBuilder(null, 1);
         BlockBuilder singleMapBlockBuilder = blockBuilder.beginBlockEntry();
-        for (Map.Entry<Long, HyperLogLog> entry : digest.getHashCounts().entrySet()) {
+        for (Map.Entry<Long, Double> entry : khll.uniquenessDistribution(histogramSize).entrySet()) {
             BIGINT.writeLong(singleMapBlockBuilder, entry.getKey());
-            SMALLINT.writeLong(singleMapBlockBuilder, 1);
+            DOUBLE.writeDouble(singleMapBlockBuilder, entry.getValue());
         }
         blockBuilder.closeEntry();
 
@@ -111,23 +104,41 @@ public final class KHyperLogLogFunctions
     }
 
     @ScalarFunction
-    @SqlType(StandardTypes.VARCHAR)
-    public static Slice hashCounts(@SqlType(KHyperLogLogType.NAME) Slice slice)
-    {
-        KHyperLogLog digest = KHyperLogLog.newInstance(slice);
-
-        try {
-            return Slices.utf8Slice(OBJECT_MAPPER.writeValueAsString(digest.getHashCounts()));
-        }
-        catch (JsonProcessingException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    @ScalarFunction
     @SqlType(StandardTypes.DOUBLE)
     public static double reidentificationPotential(@SqlType(KHyperLogLogType.NAME) Slice khll, @SqlType(StandardTypes.BIGINT) long threshold)
     {
         return KHyperLogLog.newInstance(khll).reidentificationPotential(threshold);
+    }
+
+    @ScalarFunction
+    @SqlType(KHyperLogLogType.NAME)
+    public static Slice mergeKhll(@SqlType("array(KHyperLogLog)") Block block)
+    {
+        if (block.getPositionCount() == 0) {
+            return null;
+        }
+
+        KHyperLogLog merged = null;
+        int firstNonNullIndex = 0;
+
+        while (firstNonNullIndex < block.getPositionCount() && block.isNull(firstNonNullIndex)) {
+            firstNonNullIndex++;
+        }
+
+        if (firstNonNullIndex == block.getPositionCount()) {
+            return null;
+        }
+
+        Slice initialSlice = block.getSlice(firstNonNullIndex, 0, block.getSliceLength(firstNonNullIndex));
+        merged = KHyperLogLog.newInstance(initialSlice);
+
+        for (int i = firstNonNullIndex; i < block.getPositionCount(); i++) {
+            Slice currentSlice = block.getSlice(i, 0, block.getSliceLength(i));
+            if (!block.isNull(i)) {
+                merged = KHyperLogLog.merge(merged, KHyperLogLog.newInstance(currentSlice));
+            }
+        }
+
+        return merged.serialize();
     }
 }
